@@ -1,16 +1,43 @@
-# React + Vite
+# MediSense AI - Medical Report Analyzer
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+MediSense AI is a full-stack web application designed to help patients and medical professionals instantly analyze medical reports, blood tests, and prescriptions using advanced AI.
 
-Currently, two official plugins are available:
+## Features
+- 📄 **Smart PDF Extraction:** Drag and drop medical PDFs to instantly extract key data.
+- 🧠 **AI Summarization:** Powered by Google Gemini 1.5 Flash to provide plain-English summaries of complex medical jargon.
+- 📊 **Health Trend Tracking:** Visualizes historical health markers (like cholesterol and blood sugar) using interactive charts.
+- 💊 **Medication Insights:** Automatically identifies prescribed medications and provides easy-to-understand usage warnings.
+- 🌙 **Dark Mode:** A fully responsive, modern UI built with TailwindCSS v4 and Framer Motion.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Tech Stack
+- **Frontend:** React, Vite, TailwindCSS v4, Recharts, Framer Motion
+- **Backend:** Node.js, Express, Multer
+- **Database:** MongoDB
+- **AI Integration:** Google Gemini API (`@google/genai`)
 
-## React Compiler
+## Local Development
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 1. Setup the Backend
+Navigate to the `server` directory and create a `.env` file containing:
+```
+MONGODB_URI=your_mongodb_connection_string
+GEMINI_API_KEY=your_gemini_api_key
+PORT=5000
+```
+Then run:
+```bash
+cd server
+npm install
+node server.js
+```
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+### 2. Setup the Frontend
+In the root directory, create a `.env` file:
+```
+VITE_API_URL=http://localhost:5000
+```
+Then run:
+```bash
+npm install
+npm run dev
+```

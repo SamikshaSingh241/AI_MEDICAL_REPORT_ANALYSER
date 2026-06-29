@@ -12,11 +12,14 @@ const Report = require('./models/Report');
 
 const app = express();
 app.use(cors({
-  origin: [
-    'http://localhost:5173', 
-    'https://ai-medical-report-analyzer.vercel.app',
-    'https://ai-medical-report-analyzer-git-main-samikshasingh241s-projects.vercel.app' // Optional wildcard fallback can be configured if needed, but array is safer
-  ], 
+  origin: function (origin, callback) {
+    // Allow local development and any vercel deployment
+    if (!origin || origin === 'http://localhost:5173' || origin.endsWith('.vercel.app')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }, 
   credentials: true
 }));
 app.use(express.json());

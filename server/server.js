@@ -3,14 +3,24 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const multer = require('multer');
 const { GoogleGenAI } = require('@google/genai');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
 const User = require('./models/User');
 const Report = require('./models/Report');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: [
+    'http://localhost:5173', 
+    'https://ai-medical-report-analyzer.vercel.app',
+    'https://ai-medical-report-analyzer-git-main-samikshasingh241s-projects.vercel.app' // Optional wildcard fallback can be configured if needed, but array is safer
+  ], 
+  credentials: true
+}));
 app.use(express.json());
+app.use(cookieParser());
 
 // Initialize Gemini SDK
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -44,10 +54,21 @@ seedUser();
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    // Simple mock authentication against MongoDB
+    // Simple authentication against MongoDB
     const user = await User.findOne({ email, password });
     if (user) {
-      res.json({ success: true, userId: user._id, email: user.email });
+      // Generate JWT
+      const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+      
+      // Set HttpOnly Cookie
+      res.cookie('auth_token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      });
+
+      res.json({ success: true, email: user.email });
     } else {
       res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
@@ -71,19 +92,55 @@ app.post('/api/auth/register', async (req, res) => {
     const newUser = new User({ email, password });
     await newUser.save();
 
-    res.json({ success: true, userId: newUser._id, email: newUser.email });
+    // Generate JWT
+    const token = jwt.sign({ userId: newUser._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    
+    // Set HttpOnly Cookie
+    res.cookie('auth_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    });
+
+    res.json({ success: true, email: newUser.email });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// 1.6 Auth Logout Route
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie('auth_token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+  });
+  res.json({ success: true });
+});
+
+// Auth Middleware
+const verifyToken = (req, res, next) => {
+  const token = req.cookies.auth_token;
+  if (!token) return res.status(401).json({ success: false, message: 'Unauthorized: No token provided' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.userId = decoded.userId;
+    next();
+  } catch (err) {
+    res.clearCookie('auth_token');
+    res.status(401).json({ success: false, message: 'Unauthorized: Invalid token' });
+  }
+};
+
 // 2. Upload & Analyze Route
-app.post('/api/reports/analyze', upload.single('file'), async (req, res) => {
+app.post('/api/reports/analyze', verifyToken, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     
-    // We expect the frontend to send the userId as part of the FormData
-    const { userId } = req.body;
+    // Get userId from verified JWT token
+    const userId = req.userId;
 
     const fileData = {
       inlineData: {

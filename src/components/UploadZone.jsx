@@ -12,13 +12,12 @@ export default function UploadZone({ onUploadSuccess }) {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const userId = localStorage.getItem('userId');
-      if (userId) formData.append('userId', userId);
       
       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
       const response = await fetch(`${apiUrl}/api/reports/analyze`, {
         method: 'POST',
-        body: formData
+        body: formData,
+        credentials: 'include' // Automatically sends the HttpOnly JWT cookie
       });
       
       const result = await response.json();

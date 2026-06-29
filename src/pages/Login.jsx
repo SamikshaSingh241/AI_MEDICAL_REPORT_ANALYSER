@@ -21,12 +21,12 @@ export default function Login() {
       const response = await fetch(`${apiUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password }),
+        credentials: 'include' // Allow receiving HttpOnly cookies
       });
       const data = await response.json();
       
       if (data.success) {
-        localStorage.setItem('userId', data.userId);
         navigate('/dashboard');
       } else {
         setError(data.message || 'Login failed');
@@ -44,12 +44,12 @@ export default function Login() {
       const response = await fetch(`${apiUrl}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password }),
+        credentials: 'include' // Allow receiving HttpOnly cookies
       });
       const data = await response.json();
       
       if (data.success) {
-        localStorage.setItem('userId', data.userId);
         navigate('/dashboard');
       } else {
         setError(data.message || 'Registration failed');

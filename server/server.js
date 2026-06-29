@@ -56,6 +56,27 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+// 1.5 Auth Register Route
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: 'An account with this email already exists' });
+    }
+
+    // Create new user
+    const newUser = new User({ email, password });
+    await newUser.save();
+
+    res.json({ success: true, userId: newUser._id, email: newUser.email });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // 2. Upload & Analyze Route
 app.post('/api/reports/analyze', upload.single('file'), async (req, res) => {
   try {

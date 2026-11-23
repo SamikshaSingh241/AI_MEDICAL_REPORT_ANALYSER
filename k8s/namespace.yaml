@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: medisense-ai
+  labels:
+    app.kubernetes.io/name: medisense-ai
+    app.kubernetes.io/part-of: healthcare-cloud-platform
+    environment: production

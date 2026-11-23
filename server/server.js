@@ -11,32 +11,89 @@ const User = require('./models/User');
 const Report = require('./models/Report');
 
 const app = express();
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow local development and any vercel deployment
-    if (!origin || origin === 'http://localhost:5173' || origin.endsWith('.vercel.app')) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  }, 
-  credentials: true
-}));
-app.use(express.json());
+
+const allowedOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
+  : ['http://localhost:5173', 'http://localhost:3000', 'http://localhost'];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true,
+  })
+);
+
+app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
-// Initialize Gemini SDK
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
-// Set up Multer for handling file uploads in memory (to send to Gemini as base64)
-const upload = multer({ storage: multer.memoryStorage() });
+// Liveness probe (checks if Node process is responsive)
+app.get('/healthz', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('MongoDB connection error:', err));
+// Readiness probe (checks if MongoDB connection is ready)
+app.get('/readyz', (req, res) => {
+  const isConnected = mongoose.connection.readyState === 1;
+  if (isConnected) {
+    return res.status(200).json({ status: 'ready', database: 'connected' });
+  }
+  return res.status(503).json({ status: 'not ready', database: 'disconnected' });
+});
 
-// Seed mock users if they don't exist
+// Basic server and DB health status
+app.get('/api/health', (req, res) => {
+  const memoryUsage = process.memoryUsage();
+  res.json({
+    status: 'healthy',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    database: {
+      status: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+      host: mongoose.connection.host || 'unknown',
+    },
+    system: {
+      memory: {
+        heapUsedMB: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+        rssMB: Math.round(memoryUsage.rss / 1024 / 1024),
+      },
+      nodeVersion: process.version,
+    },
+  });
+});
+
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/medisense';
+
+const connectWithRetry = () => {
+  mongoose
+    .connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000,
+    })
+    .then(() => {
+      console.log('Connected to MongoDB');
+      seedUser();
+    })
+    .catch((err) => {
+      console.error('MongoDB connection error:', err.message);
+      console.log('Retrying MongoDB connection in 5 seconds...');
+      setTimeout(connectWithRetry, 5000);
+    });
+};
+
+connectWithRetry();
+
 const seedUser = async () => {
   try {
     const existing = await User.findOne({ email: 'admin@medisense.com' });
@@ -45,30 +102,25 @@ const seedUser = async () => {
       await User.create({ email: 'patient@medisense.com', password: 'password123' });
       console.log('Test users seeded');
     }
-  } catch(e) {
-    console.error('Error seeding users:', e);
+  } catch (e) {
+    console.error('Error seeding users:', e.message);
   }
 };
-seedUser();
 
-// --- ROUTES ---
-
-// 1. Auth Login Route
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    // Simple authentication against MongoDB
     const user = await User.findOne({ email, password });
     if (user) {
-      // Generate JWT
-      const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-      
-      // Set HttpOnly Cookie
+      const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET || 'jwt_secret_key', {
+        expiresIn: '7d',
+      });
+
       res.cookie('auth_token', token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+        maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
       res.json({ success: true, email: user.email });
@@ -80,30 +132,24 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// 1.5 Auth Register Route
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password } = req.body;
-    
-    // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ success: false, message: 'An account with this email already exists' });
     }
-
-    // Create new user
     const newUser = new User({ email, password });
     await newUser.save();
+    const token = jwt.sign({ userId: newUser._id }, process.env.JWT_SECRET || 'jwt_secret_key', {
+      expiresIn: '7d',
+    });
 
-    // Generate JWT
-    const token = jwt.sign({ userId: newUser._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    
-    // Set HttpOnly Cookie
     res.cookie('auth_token', token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
     res.json({ success: true, email: newUser.email });
@@ -112,7 +158,6 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// 1.6 Auth Logout Route
 app.post('/api/auth/logout', (req, res) => {
   res.clearCookie('auth_token', {
     httpOnly: true,
@@ -122,13 +167,12 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ success: true });
 });
 
-// Auth Middleware
 const verifyToken = (req, res, next) => {
   const token = req.cookies.auth_token;
   if (!token) return res.status(401).json({ success: false, message: 'Unauthorized: No token provided' });
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'jwt_secret_key');
     req.userId = decoded.userId;
     next();
   } catch (err) {
@@ -137,19 +181,16 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-// 2. Upload & Analyze Route
 app.post('/api/reports/analyze', verifyToken, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    
-    // Get userId from verified JWT token
-    const userId = req.userId;
 
+    const userId = req.userId;
     const fileData = {
       inlineData: {
-        data: req.file.buffer.toString("base64"),
-        mimeType: req.file.mimetype // e.g. "application/pdf" or image/png
-      }
+        data: req.file.buffer.toString('base64'),
+        mimeType: req.file.mimetype,
+      },
     };
 
     const prompt = `You are a medical AI assistant. Analyze this medical document and extract the key information into a strict JSON format. 
@@ -176,38 +217,55 @@ The JSON must have this exact structure (no markdown formatting, just raw JSON):
 }
 If the document is not a clear medical report, hallucinate realistic medical mock data in this format so the UI doesn't break. Ensure chartData simulates a logical trend.`;
 
-    // Call Gemini API
     const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: [fileData, prompt],
-        config: {
-          responseMimeType: "application/json"
-        }
+      model: 'gemini-2.5-flash',
+      contents: [fileData, prompt],
+      config: {
+        responseMimeType: 'application/json',
+      },
     });
 
     const responseText = response.text;
     const parsedData = JSON.parse(responseText);
 
-    // Save the parsed data to MongoDB
     const report = new Report({
       userId: userId || null,
       fileName: req.file.originalname,
-      ...parsedData
+      ...parsedData,
     });
-    
+
     await report.save();
-
-    // Send the generated report data back to the frontend
     res.json({ success: true, data: report });
-
   } catch (error) {
     console.error('Error analyzing report with Gemini:', error);
     res.status(500).json({ success: false, error: 'Failed to analyze report' });
   }
 });
 
-// Start Server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+// Graceful shutdown handling
+const gracefulShutdown = (signal) => {
+  console.log(`Received ${signal}, closing server connections...`);
+  server.close(async () => {
+    try {
+      await mongoose.connection.close(false);
+      console.log('MongoDB connection closed.');
+      process.exit(0);
+    } catch (err) {
+      console.error('Error closing MongoDB connection:', err);
+      process.exit(1);
+    }
+  });
+
+  setTimeout(() => {
+    console.error('Forced shutdown timeout reached');
+    process.exit(1);
+  }, 10000);
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

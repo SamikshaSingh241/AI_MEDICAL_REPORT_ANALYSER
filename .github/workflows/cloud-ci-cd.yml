@@ -1,0 +1,108 @@
+name: Cloud CI/CD & Security Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - cloud-docker-devops
+  pull_request:
+    branches:
+      - main
+      - cloud-docker-devops
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+jobs:
+  # --- Phase 1: Code Quality & Dependencies ---
+  code-quality:
+    name: Code Quality & Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Lint Frontend Code
+        run: npm run lint || echo "Lint warnings detected, continuing build"
+
+      - name: Install Backend Dependencies
+        working-directory: ./server
+        run: npm ci
+
+  # --- Phase 2: Security & Vulnerability Scanning ---
+  security-scan:
+    name: Container & Code Security Scan (Trivy)
+    runs-on: ubuntu-latest
+    needs: code-quality
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Vulnerability Scanner (Repo & Config)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0' # Non-blocking scan for visibility
+
+  # --- Phase 3: Docker Multi-Stage Build & Image Verification ---
+  docker-build:
+    name: Build & Verify Docker Images
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          push: false
+          tags: medisense-backend:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Frontend Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: medisense-frontend:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # --- Phase 4: Kubernetes Manifest Validation (GitOps) ---
+  k8s-validation:
+    name: Kubernetes Manifest Dry-Run
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'latest'
+
+      - name: Validate K8s Manifests with Kustomize
+        run: |
+          kubectl kustomize k8s/ > generated-manifests.yaml
+          cat generated-manifests.yaml

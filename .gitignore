@@ -13,6 +13,11 @@ dist
 dist-ssr
 *.local
 .env
+*.pdf
+resume_template.html
+resume/
+*.pdf
+resume/
 
 # Editor directories and files
 .vscode/*
